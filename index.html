@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gestion pharmacie</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0e7c66">
+<style>
+:root{--bg:#f6f8f7;--card:#fff;--ink:#12302b;--mut:#5d716c;--line:#d9e2df;--acc:#0e7c66;--accI:#fff;--warn:#b45309;--bad:#b42318;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1a18;--card:#16241f;--ink:#e6f0ed;--mut:#9bb0aa;--line:#28403a;--acc:#2bb59a;--accI:#06211b;--warn:#f0a04b;--bad:#ff8a7a;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 14px;background:var(--acc);color:var(--accI)}
+header b{font-size:17px}
+nav{display:flex;gap:4px;overflow-x:auto;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--card)}
+nav button{background:none;color:var(--mut);border:0;padding:8px 12px;border-radius:6px;white-space:nowrap}
+nav button.on{background:var(--acc);color:var(--accI)}
+main{max-width:1000px;margin:0 auto;padding:12px}
+section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+h2{margin:0 0 10px;font-size:16px}
+.two{display:grid;gap:12px;grid-template-columns:1fr}
+@media(min-width:760px){.two{grid-template-columns:1fr 1fr}}
+.grid{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:8px}
+input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+button{background:var(--acc);color:var(--accI);border:0;border-radius:6px;padding:10px 14px;font:inherit;cursor:pointer}
+button.g{background:transparent;color:inherit;border:1px solid currentColor;padding:5px 10px}
+button.d{background:var(--bad);color:#fff}
+button:disabled{opacity:.4}
+:focus-visible{outline:3px solid var(--warn);outline-offset:1px}
+.row{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;background:var(--bg);color:var(--ink);border:1px solid var(--line);margin-top:6px}
+.line{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--line)}
+.tot{font-size:26px;font-weight:700;margin:10px 0}
+.wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+.bad{color:var(--bad)}.warn{color:var(--warn)}.mut{color:var(--mut)}
+.login{max-width:360px;margin:12vh auto;padding:0 14px}
+.login input,.login select{margin-bottom:10px}
+#ticket{display:none}
+@media print{body>*:not(#ticket){display:none!important}#ticket{display:block;font:12px monospace;width:58mm}}
+</style></head><body>
+<div id="root"></div><div id="ticket"></div>
+<script>
+const K='pharma_v1';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=n=>new Intl.NumberFormat('fr-FR').format(Math.round(n))+' F';
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const today=()=>new Date().toLocaleDateString('sv-SE');
+const days=d=>Math.round((new Date(d)-new Date(today()))/864e5);
+const init=()=>({nom:'Pharmacie',users:[],products:[],lots:[],sales:[],audit:[]});
+function load(){try{const d=JSON.parse(localStorage.getItem(K));return d&&d.users?d:init()}catch(e){return init()}}
+function save(){try{localStorage.setItem(K,JSON.stringify(db))}catch(e){alert('Sauvegarde impossible : stockage plein ou bloqué. Exportez une sauvegarde maintenant.')}}
+let db=load(),me=null,tab='caisse',cart=[],q='',mode='Espèces',per=1,idle;
+const prod=id=>db.products.find(p=>p.id===id);
+const avail=id=>db.lots.filter(l=>l.pid===id&&l.exp>=today()).reduce((a,l)=>a+l.q,0);
+const audit=(a,d)=>{db.audit.unshift({t:new Date().toISOString(),u:me?me.nom:'-',a,d});db.audit=db.audit.slice(0,5000)};
+async function hash(p){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('ph::'+p));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+const TABS={caisse:['Caisse','v'],alertes:['Alertes','v'],stock:['Stock','g'],reception:['Réception','g'],rapports:['Rapports','g'],journal:['Journal','g'],reglages:['Réglages','g']};
+const V={};
+
+function view(){if(!db.users.length)return setup();if(!me)return login();app()}
+function setup(){$('#root').innerHTML=`<div class="login"><h2>Première configuration</h2><input id="a" placeholder="Nom de la pharmacie"><input id="b" placeholder="Votre nom (gérant)"><input id="c" type="password" placeholder="Mot de passe (6 caractères minimum)"><button onclick="doSetup()">Créer le compte gérant</button></div>`}
+async function doSetup(){const n=$('#a').value.trim(),u=$('#b').value.trim(),p=$('#c').value;if(!n||!u||p.length<6)return alert('Remplissez les 3 champs. Mot de passe : 6 caractères minimum.');db.nom=n;db.users.push({id:uid(),nom:u,role:'gerant',pin:await hash(p)});save();view()}
+function login(){$('#root').innerHTML=`<div class="login"><h2>${esc(db.nom)}</h2><select id="u">${db.users.map(u=>`<option value="${u.id}">${esc(u.nom)}</option>`).join('')}</select><input id="p" type="password" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')doLogin()"><button onclick="doLogin()">Se connecter</button></div>`}
+async function doLogin(){const u=db.users.find(x=>x.id===$('#u').value);if(!u||u.pin!==await hash($('#p').value))return alert('Mot de passe incorrect.');me=u;tab='caisse';cart=[];audit('CONNEXION','');save();view()}
+function logout(){me=null;cart=[];view()}
+['click','keydown','touchstart'].forEach(e=>addEventListener(e,()=>{clearTimeout(idle);idle=setTimeout(()=>{if(me){me=null;view()}},5*60*1000)}));
+function alerts(){const low=db.products.filter(p=>p.on!==false&&avail(p.id)<=p.min);const live=db.lots.filter(l=>l.q>0);return{low,soon:live.filter(l=>l.exp>=today()&&days(l.exp)<=90),exp:live.filter(l=>l.exp<today())}}
+function app(){const A=alerts(),n=A.low.length+A.soon.length+A.exp.length;const it=Object.entries(TABS).filter(([k,v])=>v[1]==='v'||me.role==='gerant');
+$('#root').innerHTML=`<header><b>${esc(db.nom)}</b><span>${esc(me.nom)} <button class="g" onclick="logout()">Quitter</button></span></header><nav>${it.map(([k,v])=>`<button class="${k===tab?'on':''}" onclick="go('${k}')">${v[0]}${k==='alertes'&&n?' ('+n+')':''}</button>`).join('')}</nav><main id="main"></main>`;V[tab]()}
+function go(k){tab=k;app()}
+
+/* CAISSE */
+V.caisse=()=>{$('#main').innerHTML=`<div class="two"><section><h2>Produit</h2><input id="q" placeholder="Nom ou scan du code-barres" autocomplete="off" value="${esc(q)}" oninput="q=this.value;rRes()" onkeydown="if(event.key==='Enter')scan()"><div id="res"></div></section><section><h2>Panier</h2><div id="cart"></div></section></div>`;rRes();rCart();$('#q').focus()};
+function rRes(){const t=q.trim().toLowerCase();const r=t?db.products.filter(p=>p.on!==false&&(p.nom.toLowerCase().includes(t)||p.code===q.trim())).slice(0,8):[];$('#res').innerHTML=r.length?r.map(p=>`<button class="row" ${avail(p.id)?'':'disabled'} onclick="add('${p.id}')"><span>${esc(p.nom)}</span><span>${fmt(p.pv)} · stock ${avail(p.id)}</span></button>`).join(''):`<p class="mut">${t?'Aucun produit trouvé.':'Cherchez un produit pour l’ajouter au panier.'}</p>`}
+function scan(){const p=db.products.find(x=>x.on!==false&&x.code&&x.code===q.trim());if(p){add(p.id);q='';$('#q').value='';rRes()}}
+function add(id){const c=cart.find(x=>x.pid===id);const n=(c?c.qty:0)+1;if(n>avail(id))return alert('Stock insuffisant (lots périmés exclus).');c?c.qty=n:cart.push({pid:id,qty:1});rCart()}
+function chg(id,d){const c=cart.find(x=>x.pid===id);const n=c.qty+d;if(n>avail(id))return alert('Stock insuffisant.');if(n<=0)cart=cart.filter(x=>x.pid!==id);else c.qty=n;rCart()}
+const total=()=>cart.reduce((a,c)=>a+prod(c.pid).pv*c.qty,0);
+function rCart(){$('#cart').innerHTML=cart.length?cart.map(c=>{const p=prod(c.pid);return`<div class="line"><span>${esc(p.nom)}<br><span class="mut">${fmt(p.pv)}</span></span><span><button class="g" onclick="chg('${c.pid}',-1)">−</button> ${c.qty} <button class="g" onclick="chg('${c.pid}',1)">+</button></span></div>`}).join('')+`<div class="tot">${fmt(total())}</div><select onchange="mode=this.value">${['Espèces','TMoney','Flooz'].map(m=>`<option ${m===mode?'selected':''}>${m}</option>`).join('')}</select><p><button onclick="encaisser()">Encaisser</button> <button class="g" onclick="cart=[];rCart()">Vider</button></p>`:'<p class="mut">Panier vide.</p>'}
+function encaisser(){if(!cart.length)return;const rem={};db.lots.forEach(l=>rem[l.id]=l.q);const lines=[];
+for(const c of cart){const p=prod(c.pid);let need=c.qty;const alloc=[];
+for(const l of db.lots.filter(l=>l.pid===c.pid&&rem[l.id]>0&&l.exp>=today()).sort((a,b)=>a.exp.localeCompare(b.exp))){const t=Math.min(need,rem[l.id]);rem[l.id]-=t;need-=t;alloc.push({lot:l.id,q:t});if(!need)break}
+if(need)return alert('Stock insuffisant pour '+p.nom);lines.push({pid:p.id,nom:p.nom,q:c.qty,pv:p.pv,pa:p.pa,alloc})}
+db.lots.forEach(l=>l.q=rem[l.id]);const s={id:uid(),t:new Date().toISOString(),u:me.nom,mode,lines,total:total(),c:false};db.sales.unshift(s);audit('VENTE',fmt(s.total)+' '+mode);save();ticket(s);cart=[];V.caisse()}
+function ticket(s){$('#ticket').innerHTML=`<b>${esc(db.nom)}</b><br>${new Date(s.t).toLocaleString('fr-FR')}<br>Vendeur : ${esc(s.u)}<hr>${s.lines.map(l=>`${esc(l.nom)}<br>${l.q} x ${fmt(l.pv)} = ${fmt(l.q*l.pv)}<br>`).join('')}<hr><b>TOTAL ${fmt(s.total)}</b><br>${esc(s.mode)}<br>Merci de votre visite.`;setTimeout(()=>print(),100)}
+
+/* ALERTES */
+V.alertes=()=>{const A=alerts();const sec=(t,c,rows)=>`<section><h2>${t} (${rows.length})</h2>${rows.length?rows.join(''):'<p class="mut">Rien à signaler.</p>'}</section>`;
+$('#main').innerHTML=sec('Périmés à retirer',0,A.exp.map(l=>`<div class="line bad"><span>${esc(prod(l.pid)?.nom)} · lot ${esc(l.no)} · exp. ${l.exp} · ${l.q} u.</span>${me.role==='gerant'?`<button class="d" onclick="retire('${l.id}')">Retirer</button>`:''}</div>`))+sec('Péremption sous 90 jours',0,A.soon.map(l=>`<div class="line warn"><span>${esc(prod(l.pid)?.nom)} · lot ${esc(l.no)} · ${l.exp} (${days(l.exp)} j) · ${l.q} u.</span></div>`))+sec('Stock bas',0,A.low.map(p=>`<div class="line"><span>${esc(p.nom)}</span><span class="warn">${avail(p.id)} (seuil ${p.min})</span></div>`))};
+function retire(id){const l=db.lots.find(x=>x.id===id);if(!confirm('Retirer ce lot périmé du stock ?'))return;audit('RETRAIT_PERIME',`${prod(l.pid)?.nom} lot ${l.no} : ${l.q} u.`);l.q=0;save();V.alertes()}
+
+/* STOCK */
+V.stock=()=>{$('#main').innerHTML=`<section><h2>Produit</h2><input type="hidden" id="s_id"><div class="grid"><input id="s_nom" placeholder="Nom (ex. Paracétamol 500 mg)"><input id="s_code" placeholder="Code-barres (optionnel)"><input id="s_pa" type="number" min="0" placeholder="Prix d’achat"><input id="s_pv" type="number" min="0" placeholder="Prix de vente"><input id="s_min" type="number" min="0" placeholder="Seuil d’alerte"></div><button onclick="saveP()">Enregistrer le produit</button></section><section><h2>Produits (${db.products.length})</h2><div class="wrap"><table><tr><th>Nom</th><th>Achat</th><th>Vente</th><th>Stock</th><th></th></tr>${db.products.map(p=>`<tr class="${p.on===false?'mut':''}"><td>${esc(p.nom)}</td><td>${fmt(p.pa)}</td><td>${fmt(p.pv)}</td><td>${avail(p.id)}</td><td><button class="g" onclick="editP('${p.id}')">Modifier</button> <button class="g" onclick="togP('${p.id}')">${p.on===false?'Réactiver':'Désactiver'}</button></td></tr>`).join('')}</table></div></section>`};
+function editP(id){const p=prod(id);$('#s_id').value=id;$('#s_nom').value=p.nom;$('#s_code').value=p.code||'';$('#s_pa').value=p.pa;$('#s_pv').value=p.pv;$('#s_min').value=p.min;scrollTo(0,0)}
+function togP(id){const p=prod(id);p.on=p.on===false;audit(p.on?'PRODUIT_REACTIVE':'PRODUIT_DESACTIVE',p.nom);save();V.stock()}
+function saveP(){const id=$('#s_id').value,nom=$('#s_nom').value.trim(),code=$('#s_code').value.trim(),pa=+$('#s_pa').value,pv=+$('#s_pv').value,min=+($('#s_min').value||0);
+if(!nom||!(pv>0)||!(pa>=0))return alert('Nom, prix d’achat et prix de vente (supérieur à 0) obligatoires.');
+if(pv<pa&&!confirm('Le prix de vente est inférieur au prix d’achat. Continuer ?'))return;
+if(code&&db.products.some(p=>p.code===code&&p.id!==id))return alert('Ce code-barres existe déjà.');
+if(id){const p=prod(id);if(p.pv!==pv||p.pa!==pa)audit('PRIX',`${p.nom} : vente ${p.pv}→${pv}, achat ${p.pa}→${pa}`);Object.assign(p,{nom,code,pa,pv,min});audit('PRODUIT_MODIF',nom)}
+else{db.products.push({id:uid(),nom,code,pa,pv,min,on:true});audit('PRODUIT_AJOUT',nom)}save();V.stock()}
+
+/* RECEPTION */
+V.reception=()=>{const ps=db.products.filter(p=>p.on!==false);$('#main').innerHTML=`<section><h2>Réception de marchandise</h2>${ps.length?`<div class="grid"><select id="r_p">${ps.map(p=>`<option value="${p.id}">${esc(p.nom)}</option>`).join('')}</select><input id="r_no" placeholder="N° de lot"><input id="r_exp" type="date" aria-label="Date de péremption"><input id="r_q" type="number" min="1" placeholder="Quantité"></div><button onclick="recv()">Ajouter au stock</button>`:'<p class="mut">Créez d’abord un produit dans l’onglet Stock.</p>'}</section><section><h2>Derniers lots</h2>${db.lots.slice(-10).reverse().map(l=>`<div class="line"><span>${esc(prod(l.pid)?.nom)} · lot ${esc(l.no)} · exp. ${l.exp}</span><span>${l.q}/${l.q0}</span></div>`).join('')||'<p class="mut">Aucun lot.</p>'}</section>`};
+function recv(){const pid=$('#r_p').value,no=$('#r_no').value.trim(),exp=$('#r_exp').value,qt=Math.floor(+$('#r_q').value);
+if(!no||!exp||!(qt>0))return alert('Lot, date de péremption et quantité obligatoires.');
+if(exp<=today())return alert('Date de péremption dépassée ou égale à aujourd’hui : réception refusée.');
+db.lots.push({id:uid(),pid,no,exp,q:qt,q0:qt,date:today()});audit('RECEPTION',`${prod(pid).nom} lot ${no} exp ${exp} : ${qt} u.`);save();V.reception()}
+
+/* RAPPORTS */
+V.rapports=()=>{const from=new Date();from.setHours(0,0,0,0);from.setDate(from.getDate()-(per-1));const S=db.sales.filter(s=>!s.c&&new Date(s.t)>=from);let ca=0,cost=0;const by={},top={};
+S.forEach(s=>{ca+=s.total;by[s.mode]=(by[s.mode]||0)+s.total;s.lines.forEach(l=>{cost+=l.pa*l.q;top[l.nom]=(top[l.nom]||0)+l.q})});
+$('#main').innerHTML=`<section><p>${[[1,'Aujourd’hui'],[7,'7 jours'],[30,'30 jours']].map(([d,t])=>`<button class="${per===d?'':'g'}" onclick="per=${d};V.rapports()">${t}</button>`).join(' ')}</p><div class="tot">${fmt(ca)}</div><p>${S.length} vente(s) · marge brute ${fmt(ca-cost)}</p>${Object.entries(by).map(([m,v])=>`<div class="line"><span>${esc(m)}</span><span>${fmt(v)}</span></div>`).join('')}</section><section><h2>Produits les plus vendus</h2>${Object.entries(top).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([n,v])=>`<div class="line"><span>${esc(n)}</span><span>${v}</span></div>`).join('')||'<p class="mut">Aucune vente sur la période.</p>'}</section><section><h2>Dernières ventes</h2>${db.sales.slice(0,15).map(s=>`<div class="line ${s.c?'mut':''}"><span>${new Date(s.t).toLocaleString('fr-FR')} · ${esc(s.u)} · ${esc(s.mode)}${s.c?' · ANNULÉE':''}</span><span>${fmt(s.total)} ${s.c?'':`<button class="g" onclick="annule('${s.id}')">Annuler</button>`}</span></div>`).join('')||'<p class="mut">Aucune vente.</p>'}</section>`};
+function annule(id){const s=db.sales.find(x=>x.id===id);if(!s||s.c||!confirm('Annuler cette vente et remettre les produits en stock ?'))return;s.lines.forEach(l=>l.alloc.forEach(a=>{const lot=db.lots.find(x=>x.id===a.lot);if(lot)lot.q+=a.q}));s.c=true;s.cu=me.nom;audit('ANNULATION',fmt(s.total)+' vente du '+s.t);save();V.rapports()}
+
+/* JOURNAL */
+V.journal=()=>{$('#main').innerHTML=`<section><h2>Journal des actions</h2><div class="wrap"><table><tr><th>Date</th><th>Qui</th><th>Action</th><th>Détail</th></tr>${db.audit.slice(0,200).map(a=>`<tr><td>${new Date(a.t).toLocaleString('fr-FR')}</td><td>${esc(a.u)}</td><td>${esc(a.a)}</td><td>${esc(a.d)}</td></tr>`).join('')}</table></div></section>`};
+
+/* REGLAGES */
+V.reglages=()=>{const kb=Math.round((localStorage.getItem(K)||'').length/1024);$('#main').innerHTML=`<section><h2>Utilisateurs</h2>${db.users.map(u=>`<div class="line"><span>${esc(u.nom)} · ${u.role==='gerant'?'gérant':'vendeur'}</span><button class="g" onclick="resetPw('${u.id}')">Nouveau mot de passe</button></div>`).join('')}<div class="grid" style="margin-top:10px"><input id="n_nom" placeholder="Nom"><select id="n_role"><option value="vendeur">Vendeur</option><option value="gerant">Gérant</option></select><input id="n_pw" type="password" placeholder="Mot de passe (6 min.)"></div><button onclick="addU()">Ajouter l’utilisateur</button></section><section><h2>Sauvegarde</h2><p class="${kb>3500?'bad':'mut'}">Données : ${kb} Ko sur environ 5 000 Ko disponibles dans ce navigateur.</p><p><button onclick="exportDb()">Télécharger une sauvegarde</button></p><p class="mut">Importer remplace toutes les données actuelles.</p><input type="file" accept=".json" onchange="importDb(this.files[0])"></section>`};
+async function addU(){const n=$('#n_nom').value.trim(),p=$('#n_pw').value;if(!n||p.length<6)return alert('Nom et mot de passe (6 caractères minimum) obligatoires.');db.users.push({id:uid(),nom:n,role:$('#n_role').value,pin:await hash(p)});audit('UTILISATEUR_AJOUT',n);save();V.reglages()}
+async function resetPw(id){const p=prompt('Nouveau mot de passe (6 caractères minimum) :');if(!p||p.length<6)return;const u=db.users.find(x=>x.id===id);u.pin=await hash(p);audit('MOT_DE_PASSE',u.nom);save();alert('Mot de passe changé.')}
+function exportDb(){audit('SAUVEGARDE','export');save();const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(db)],{type:'application/json'}));a.download='pharmacie-sauvegarde-'+today()+'.json';a.click()}
+function importDb(f){if(!f||!confirm('Remplacer toutes les données actuelles par cette sauvegarde ?'))return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.users||!d.users.length||!Array.isArray(d.products)||!Array.isArray(d.lots)||!Array.isArray(d.sales))throw 0;db=d;me=null;save();view()}catch(e){alert('Fichier invalide : rien n’a été modifié.')}};r.readAsText(f)}
+
+if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+view();
+</script></body></html>
